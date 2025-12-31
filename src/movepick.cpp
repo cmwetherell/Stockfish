@@ -167,7 +167,20 @@ ExtMove* MovePicker::score(MoveList<Type>& ml) {
             m.value += (*continuationHistory[5])[pc][to];
 
             // bonus for checks
-            m.value += (bool(pos.check_squares(pt) & to) && pos.see_ge(m, -75)) * 16384;
+            if ((pos.check_squares(pt) & to) && pos.see_ge(m, -75))
+            {
+                // Grade quiet-check bonus by piece type: discourage noisy queen checks.
+                static constexpr int CheckBonus[PIECE_TYPE_NB] = {
+                  0,     // NO_PIECE_TYPE
+                  15000, // PAWN
+                  16000, // KNIGHT
+                  16000, // BISHOP
+                  14000, // ROOK
+                  9000,  // QUEEN
+                  0      // KING
+                };
+                m.value += CheckBonus[pt];
+            }
 
             // penalty for moving to a square threatened by a lesser piece
             // or bonus for escaping an attack by a lesser piece.
