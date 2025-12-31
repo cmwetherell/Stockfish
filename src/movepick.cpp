@@ -207,7 +207,9 @@ Move MovePicker::select(Pred filter) {
 // picking the move with the highest score from a list of generated moves.
 Move MovePicker::next_move() {
 
-    constexpr int goodQuietThreshold = -14000;
+    // Adaptive threshold for classifying "good" vs "bad" quiets.
+    // Deeper nodes benefit from considering a wider set of quiet moves earlier.
+    const int goodQuietThreshold = -14000 - 550 * depth;
 top:
     switch (stage)
     {
