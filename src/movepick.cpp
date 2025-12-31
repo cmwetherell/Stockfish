@@ -53,7 +53,9 @@ enum Stages {
     // generate qsearch moves
     QSEARCH_TT,
     QCAPTURE_INIT,
-    QCAPTURE
+    QCAPTURE,
+    QCHECK_INIT,
+    QCHECK
 };
 
 
@@ -297,8 +299,80 @@ top:
     }
 
     case EVASION :
-    case QCAPTURE :
         return select([]() { return true; });
+
+    case QCAPTURE : {
+        Move m = select([]() { return true; });
+        if (m != Move::none())
+            return m;
+        if (qcheckLimit > 0)
+        {
+            ++stage;
+            goto top;
+        }
+        return Move::none();
+    }
+
+    case QCHECK_INIT :
+        if (qcheckLimit > 0)
+        {
+            MoveList<QUIETS> ml(pos);
+
+            // Qsearch normally never scores QUIETS, and at qsearch call sites we may
+            // only have a single continuation history pointer. Keep this scoring
+            // self-contained and only use the 1-ply continuation entry.
+            //
+            // IMPORTANT: Keep overhead tiny. We only collect a small number of
+            // (quiet, normal) checks and score just those.
+            constexpr int QCHECK_CANDIDATES_CAP = 32;
+            Color         us                    = pos.side_to_move();
+
+            cur = moves;
+            for (auto move : ml)
+            {
+                if (cur - moves >= QCHECK_CANDIDATES_CAP)
+                    break;
+
+                if (move.type_of() != NORMAL)
+                    continue;
+
+                if (!pos.gives_check(move) || !pos.see_ge(move, -75))
+                    continue;
+
+                ExtMove& m = *cur++;
+                m          = move;
+
+                const Square to = m.to_sq();
+                const Piece  pc = pos.moved_piece(m);
+
+                m.value = 2 * (*mainHistory)[us][m.raw()];
+                m.value += 2 * sharedHistory->pawn_entry(pos)[pc][to];
+                m.value += (*continuationHistory[0])[pc][to];
+                m.value += 16384;
+            }
+
+            endCur = endGenerated = cur;
+            cur                = moves;
+
+            // Quiet checks should score very high due to the check bonus, so we sort only the top.
+            partial_insertion_sort(cur, endCur, 8000);
+        }
+        ++stage;
+        [[fallthrough]];
+
+    case QCHECK :
+        if (qcheckLimit <= 0 || qcheckCount >= qcheckLimit)
+            return Move::none();
+
+        if (select([&]() {
+                Move m = *cur;
+                return m.type_of() == NORMAL && pos.gives_check(m) && pos.see_ge(m, -75);
+            }))
+        {
+            ++qcheckCount;
+            return *(cur - 1);
+        }
+        return Move::none();
 
     case PROBCUT :
         return select([&]() { return pos.see_ge(*cur, threshold); });
@@ -309,5 +383,10 @@ top:
 }
 
 void MovePicker::skip_quiet_moves() { skipQuiets = true; }
+
+void MovePicker::enable_quiet_checks(int limit) {
+    qcheckLimit = std::max(limit, 0);
+    qcheckCount = 0;
+}
 
 }  // namespace Stockfish

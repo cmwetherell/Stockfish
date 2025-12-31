@@ -1609,6 +1609,12 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
     MovePicker mp(pos, ttData.move, DEPTH_QS, &mainHistory, &lowPlyHistory, &captureHistory,
                   contHist, &sharedHistory, ss->ply);
 
+    // A tiny quiet-check extension for PV qsearch to reduce tactical horizon misses.
+    // Kept very conservative to avoid node blowups.
+    // Very conservative: quiet checks only at very low ply in PV qsearch.
+    if (PvNode && !ss->inCheck && ss->ply <= 1 && beta - alpha <= PawnValue)
+        mp.enable_quiet_checks(2);
+
     // Step 5. Loop through all pseudo-legal moves until no moves remain or a beta
     // cutoff occurs.
     while ((move = mp.next_move()) != Move::none())
@@ -1652,9 +1658,16 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
                 }
             }
 
-            // Skip non-captures
+            // Skip non-captures, except a very small set of quiet normal checks.
+            // This keeps qsearch tactical while allowing the MovePicker quiet-check stage.
             if (!capture)
-                continue;
+            {
+                if (!givesCheck)
+                    continue;
+
+                if (move.type_of() != NORMAL || pos.piece_on(move.to_sq()) != NO_PIECE)
+                    continue;
+            }
 
             // Do not search moves with bad enough SEE values
             if (!pos.see_ge(move, -80))
